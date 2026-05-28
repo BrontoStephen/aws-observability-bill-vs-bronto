@@ -6,6 +6,12 @@ would charge for the same ingested volume at `$0.10/GB`.
 
 No probes. No regional walks. No bucket scanning. **Just the bill.**
 
+> **Want this without the Python?** See [PROMPT.md](PROMPT.md) — a
+> portable, self-contained prompt you can paste into Claude Code,
+> OpenAI Codex CLI, Google Antigravity, or any coding agent that has
+> AWS CLI access. It produces the same Markdown report using only
+> `aws ce` calls.
+
 > Looking for a richer version that also walks every region and attributes
 > S3 log-sink buckets to their producing service? See the sibling repo
 > [bronto-aws-savings-report](https://github.com/BrontoStephen/bronto-aws-savings-report).
@@ -32,11 +38,14 @@ The bytes-per-unit assumptions are all configurable in
 - **Retention:** 12 months included on all plans.
 - **Search:** included on every plan, with overage at $1/TB:
 
-  | Plan | Monthly fee | Ingest included | Search included |
-  | --- | --- | --- | --- |
-  | Starter | $25 | 1 TB | 20 TB flat |
-  | Pro | $500 | 5 TB | 500 TB flat (100 × ingest tier) |
-  | Enterprise | per-GB | — | **100 × actual ingested volume** |
+  | Plan | Monthly fee | Ingest | Search | Notes |
+  | --- | --- | --- | --- | --- |
+  | Starter | $25 | 1 TB included | 20 TB included | email support, no SSO |
+  | Pro | $500 | 5 TB included | 500 TB included | SSO + RBAC, priority support |
+  | Enterprise | custom | $0.10/GB pay-as-you-go | $1/TB pay-as-you-go | dedicated Slack + TAM, SLA, HIPAA/SOC2, extendable retention |
+
+  Worked Enterprise example from Bronto: 1 GB ingest + 300 GB search =
+  $0.10 + $0.30 = **$0.40**.
 
   The projector picks the cheapest plan total (ingest + search) for the
   headline projection and shows all three side by side.
