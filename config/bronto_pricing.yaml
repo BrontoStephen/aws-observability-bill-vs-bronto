@@ -9,25 +9,27 @@ included_retention_months: 12
 # instead of a number. Set to a per-GB-month rate if you have a quote.
 extended_retention_per_gb_month_usd: null
 
-# Search pricing — Pro tier only.
-# Pro plan includes 100 × ingest tier (5 TB) = 500 TB of search at no extra
-# cost, then $1/TB ($0.001/GB) thereafter. When search GB > 0 the headline
-# projection is forced to the Pro plan, regardless of which ingest tier
-# would otherwise be cheapest.
-search_per_gb_usd: 0.001                 # $1/TB
-search_included_tb_pro: 500              # bundled with the Pro plan
-search_force_pro_when_present: true
+# Search pricing — included on every plan, overage at $1/TB ($0.001/GB).
+# Inclusion varies by plan (see `plans` below).
+search_per_gb_usd: 0.001
 
 plans:
+  # Starter: 20 TB search included flat.
   - name: starter
     monthly_fee_usd: 25
     included_tb: 1
+    search_included_tb: 20
+  # Pro: 100 × the 5 TB ingest tier = 500 TB search included flat.
   - name: pro
     monthly_fee_usd: 500
     included_tb: 5
+    search_included_tb: 500
+  # Enterprise: per-GB ingest; search scales as 100 × the customer's
+  # actual ingested volume in the same window.
   - name: enterprise
     monthly_fee_usd: 0
-    included_tb: 0   # pure per-GB
+    included_tb: 0
+    search_multiplier_of_ingest: 100
 
 # Volume conversion assumptions used when AWS reports counts instead of bytes.
 bytes_per_xray_trace: 2048          # 2 KB / trace

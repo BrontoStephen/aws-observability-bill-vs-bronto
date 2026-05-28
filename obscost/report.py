@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .bronto import BrontoPricing, BrontoProjection
+from .bronto import BrontoPricing, BrontoProjection, TB_TO_GB
 from .cost_explorer import CostReport
 from .org import Account
 
@@ -45,11 +45,8 @@ def render(
     lines.append("## Executive Summary")
     lines.append("")
     lines.append(f"- **AWS observability spend ({window_days}d):** {_usd(obs_total)}")
-    plan_note = ""
-    if projection.forced_pro:
-        plan_note = " — Pro tier forced because search > 0"
     lines.append(
-        f"- **Projected Bronto spend ({projection.cheapest_plan} plan{plan_note}):** "
+        f"- **Projected Bronto spend ({projection.cheapest_plan} plan):** "
         f"{_usd(bronto_total)}"
     )
     if projection.gb_searched > 0:
@@ -115,9 +112,10 @@ def render(
             lines.append(f"| {src} | {gb:,.1f} |")
         lines.append("")
     lines.append(
-        "| Plan | Monthly fee | Included ingest | Ingest cost | Search cost | Total |"
+        "| Plan | Monthly fee | Included ingest | Search allowance | "
+        "Ingest cost | Search cost | Total |"
     )
-    lines.append("| --- | ---: | ---: | ---: | ---: | ---: |")
+    lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
     for plan in pricing.plans:
         name = plan["name"]
         fee = float(plan["monthly_fee_usd"])
@@ -125,18 +123,24 @@ def render(
         ingest_cost = projection.plan_ingest_costs.get(name, 0.0)
         search_cost = projection.plan_search_costs.get(name, 0.0)
         total = projection.plan_costs.get(name, 0.0)
+        allowance_gb = projection.plan_search_allowance_gb.get(name, 0.0)
+        if "search_multiplier_of_ingest" in plan:
+            allowance_label = (
+                f"{plan['search_multiplier_of_ingest']}× ingest "
+                f"({allowance_gb / TB_TO_GB:,.1f} TB)"
+            )
+        else:
+            allowance_label = f"{allowance_gb / TB_TO_GB:,.0f} TB"
         cheapest = " ←" if name == projection.cheapest_plan else ""
         lines.append(
-            f"| {name}{cheapest} | {_usd(fee)} | {inc} TB/mo | "
+            f"| {name}{cheapest} | {_usd(fee)} | {inc} TB/mo | {allowance_label} | "
             f"{_usd(ingest_cost)} | {_usd(search_cost)} | {_usd(total)} |"
         )
     if projection.gb_searched > 0:
-        search_tb = pricing.search_included_tb_pro
         lines.append("")
         lines.append(
-            f"_Search pricing: Pro tier includes {search_tb:,.0f} TB free, "
-            f"then ${pricing.search_per_gb_usd * 1024:.0f}/TB. "
-            f"Other tiers charge from byte 1._"
+            f"_Search overage: ${pricing.search_per_gb_usd * 1024:.0f}/TB on all "
+            f"plans once the included allowance is exceeded._"
         )
     lines.append("")
 
@@ -161,12 +165,10 @@ def render(
         "projected savings can look large."
     )
     lines.append(
-        "- Bronto search is priced as a Pro-tier perk: 500 TB scanned "
-        "included with the $500/mo Pro plan, $1/TB after. When any search "
-        "volume is detected, the headline projection is forced to Pro "
-        "regardless of which tier would be cheapest for ingest alone — "
-        "tune `search_force_pro_when_present` in the rate card if you "
-        "want a different policy."
+        "- Bronto search inclusion varies per plan: Starter bundles 20 TB, "
+        "Pro bundles 500 TB, Enterprise scales as 100× the customer's actual "
+        "ingested volume. Overage on any plan is $1/TB. The cheapest "
+        "tier wins."
     )
     if projection.extended_retention_note:
         lines.append(f"- {projection.extended_retention_note}")

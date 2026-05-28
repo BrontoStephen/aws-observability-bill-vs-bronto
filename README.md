@@ -27,14 +27,17 @@ The bytes-per-unit assumptions are all configurable in
 ### Bronto pricing model
 
 - **Ingest:** $0.10/GB, uniform across logs/metrics/traces.
-- **Search:** Pro-tier perk — Pro plan ($500/mo) bundles 500 TB of
-  search scanned at no extra cost, then $1/TB. Starter and Enterprise
-  pay $1/TB from byte 1.
 - **Retention:** 12 months included on all plans.
-- When any search volume is detected, the headline projection is forced
-  to the Pro plan (since search is effectively a Pro-tier feature).
-  Toggle `search_force_pro_when_present: false` in the rate card to
-  let the projector pick the cheapest plan instead.
+- **Search:** included on every plan, with overage at $1/TB:
+
+  | Plan | Monthly fee | Ingest included | Search included |
+  | --- | --- | --- | --- |
+  | Starter | $25 | 1 TB | 20 TB flat |
+  | Pro | $500 | 5 TB | 500 TB flat (100 × ingest tier) |
+  | Enterprise | per-GB | — | **100 × actual ingested volume** |
+
+  The projector picks the cheapest plan total (ingest + search) for the
+  headline projection and shows all three side by side.
 
 OpenSearch, AMG, alarms, dashboards, retention storage, and API request
 charges appear in the AWS total but have no Bronto counterpart — see the
