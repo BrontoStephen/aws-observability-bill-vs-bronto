@@ -98,6 +98,18 @@ the substring "log"):
 
 ### Step 5 — compute `gb_ingested`
 
+This covers **all three observability signals — logs, metrics, and
+traces** — across the AWS services that meter ingest. Bucket each line
+into a signal type so the report can show subtotals:
+
+| Bucket | Signal |
+| --- | --- |
+| CloudWatch Logs | logs |
+| CloudTrail | logs |
+| CloudWatch Metrics | metrics |
+| Managed Prometheus | metrics |
+| X-Ray | traces |
+
 For each Query B line, convert `UsageQuantity.Amount` to GB ingested
 using these rules. **Lines that don't match a rule contribute 0.**
 
@@ -110,6 +122,11 @@ using these rules. **Lines that don't match a rule contribute 0.**
 | X-Ray | `tracesrecorded` | `qty × 2048 / 1024³` |
 | Managed Prometheus | `samples` | `qty × 8 / 1024³` |
 | CloudTrail | `paideventsrecorded`, `dataevents`, `data-events` | `qty × 1536 / 1024³` |
+
+Maintain a `gb_by_signal = {"logs": ..., "metrics": ..., "traces": ...}`
+rollup alongside the total. Surface both in the report — readers should
+be able to see immediately that all three signal types are being
+projected, even if (e.g.) traces are zero because X-Ray isn't used.
 
 **Bytes-per-unit defaults** (state these in the report so they can be
 challenged):
@@ -179,6 +196,7 @@ sections, in order:
    - AWS observability spend ($)
    - Projected Bronto spend (cheapest plan) — show ingest vs search split
      if `gb_searched > 0`
+   - **Ingest by signal type** — one line: `Logs X GB · Metrics Y GB · Traces Z GB`
    - Projected savings ($ and %)
    - S3 (separate) note with the dollar figure if > 0
 
@@ -191,7 +209,8 @@ sections, in order:
 
 5. **Bronto Projection Detail**
    - Ingest volume + search volume callouts.
-   - Per-source GB breakdown table.
+   - Per-source GB breakdown table with **three columns**: Signal | Source | GB.
+     End with bold subtotal rows for logs / metrics / traces.
    - Plan comparison table with columns:
      Plan | Monthly fee | Included ingest | Search allowance |
      Ingest cost | Search cost | Total. Mark cheapest with ` ←`.
