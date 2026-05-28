@@ -9,8 +9,14 @@ included_retention_months: 12
 # instead of a number. Set to a per-GB-month rate if you have a quote.
 extended_retention_per_gb_month_usd: null
 
-# Search is excluded from this comparison.
-search_per_gb_usd: 0.0
+# Search pricing — Pro tier only.
+# Pro plan includes 100 × ingest tier (5 TB) = 500 TB of search at no extra
+# cost, then $1/TB ($0.001/GB) thereafter. When search GB > 0 the headline
+# projection is forced to the Pro plan, regardless of which ingest tier
+# would otherwise be cheapest.
+search_per_gb_usd: 0.001                 # $1/TB
+search_included_tb_pro: 500              # bundled with the Pro plan
+search_force_pro_when_present: true
 
 plans:
   - name: starter

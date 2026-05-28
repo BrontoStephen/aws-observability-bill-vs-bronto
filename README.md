@@ -14,7 +14,8 @@ No probes. No regional walks. No bucket scanning. **Just the bill.**
 
 | Source | Where the cost shows up | How GB is derived |
 | --- | --- | --- |
-| CloudWatch Logs | `Amazon CloudWatch` / `DataProcessing-Bytes` | Direct (GB) |
+| CloudWatch Logs (ingest) | `Amazon CloudWatch` / `DataProcessing-Bytes` | Direct (GB) |
+| CloudWatch Logs Insights (search) | `Amazon CloudWatch` / `DataScanned-Bytes` | Direct (GB) — counted toward Bronto search |
 | CloudWatch Metrics | `Amazon CloudWatch` / `MetricMonitor` | metric-months × bytes/metric-month |
 | X-Ray | `AWS X-Ray` / `TracesRecorded` | traces × bytes/trace |
 | Managed Prometheus | `Amazon Managed Service for Prometheus` / samples | samples × bytes/sample |
@@ -22,6 +23,18 @@ No probes. No regional walks. No bucket scanning. **Just the bill.**
 
 The bytes-per-unit assumptions are all configurable in
 [config/bronto_pricing.yaml](config/bronto_pricing.yaml).
+
+### Bronto pricing model
+
+- **Ingest:** $0.10/GB, uniform across logs/metrics/traces.
+- **Search:** Pro-tier perk — Pro plan ($500/mo) bundles 500 TB of
+  search scanned at no extra cost, then $1/TB. Starter and Enterprise
+  pay $1/TB from byte 1.
+- **Retention:** 12 months included on all plans.
+- When any search volume is detected, the headline projection is forced
+  to the Pro plan (since search is effectively a Pro-tier feature).
+  Toggle `search_force_pro_when_present: false` in the rate card to
+  let the projector pick the cheapest plan instead.
 
 OpenSearch, AMG, alarms, dashboards, retention storage, and API request
 charges appear in the AWS total but have no Bronto counterpart — see the

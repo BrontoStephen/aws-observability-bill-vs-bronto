@@ -43,6 +43,8 @@ class BrontoPricing:
     included_retention_months: int
     extended_retention_per_gb_month_usd: float | None
     search_per_gb_usd: float
+    search_included_tb_pro: float
+    search_force_pro_when_present: bool
     plans: list[dict]
     bytes_per_xray_trace: int
     bytes_per_prometheus_sample: int
@@ -62,6 +64,10 @@ class BrontoPricing:
                 else float(data["extended_retention_per_gb_month_usd"])
             ),
             search_per_gb_usd=float(data.get("search_per_gb_usd", 0.0)),
+            search_included_tb_pro=float(data.get("search_included_tb_pro", 0.0)),
+            search_force_pro_when_present=bool(
+                data.get("search_force_pro_when_present", True)
+            ),
             plans=list(data.get("plans", [])),
             bytes_per_xray_trace=int(data.get("bytes_per_xray_trace", 2048)),
             bytes_per_prometheus_sample=int(data.get("bytes_per_prometheus_sample", 8)),
@@ -73,10 +79,14 @@ class BrontoPricing:
 @dataclass
 class BrontoProjection:
     gb_ingested: float = 0.0
+    gb_searched: float = 0.0
     per_source_gb: dict[str, float] = field(default_factory=dict)
-    plan_costs: dict[str, float] = field(default_factory=dict)
+    plan_costs: dict[str, float] = field(default_factory=dict)  # ingest + search per plan
+    plan_ingest_costs: dict[str, float] = field(default_factory=dict)
+    plan_search_costs: dict[str, float] = field(default_factory=dict)
     cheapest_plan: str = ""
     cheapest_cost: float = 0.0
+    forced_pro: bool = False  # true when search>0 pushed us to Pro
     months_in_window: float = 0.0
     extended_retention_note: str | None = None
 
@@ -91,7 +101,7 @@ def _line_to_gb(line: UsageLine, pricing: BrontoPricing) -> float:
     """Convert a Cost Explorer usage line into estimated GB ingested.
 
     Returns 0 for lines that don't represent ingestion (retention storage,
-    API requests, dashboards, alarms, instance hours, etc.).
+    API requests, dashboards, alarms, instance hours, search/scan, etc.).
     """
     ut = (line.usage_type or "").lower()
     qty = line.quantity
@@ -109,8 +119,28 @@ def _line_to_gb(line: UsageLine, pricing: BrontoPricing) -> float:
     return 0.0
 
 
+def _line_to_search_gb(line: UsageLine) -> float:
+    """Return GB scanned by CloudWatch Logs Insights queries.
+
+    AWS reports this as `*-DataScanned-Bytes` (quantity already in GB).
+    """
+    ut = (line.usage_type or "").lower()
+    if line.bucket == "CloudWatch Insights" and "datascanned" in ut:
+        return line.quantity
+    return 0.0
+
+
 def project(report: CostReport, pricing: BrontoPricing) -> BrontoProjection:
-    """Convert observability usage into a Bronto cost projection."""
+    """Convert observability usage into a Bronto cost projection.
+
+    Ingest cost is computed per plan from each plan's monthly fee + included
+    allowance + overage. Search cost is computed per plan separately: the
+    Pro tier includes `search_included_tb_pro` of free scan; other tiers
+    charge `search_per_gb_usd` from byte 1. When search is present and
+    `search_force_pro_when_present` is true, the headline projection uses
+    the Pro plan regardless of which tier would be cheapest for ingest
+    alone.
+    """
     proj = BrontoProjection(months_in_window=_months_between(report.start, report.end))
 
     per_source: dict[str, float] = {}
@@ -118,24 +148,46 @@ def project(report: CostReport, pricing: BrontoPricing) -> BrontoProjection:
         if line.account_id != "*":
             continue
         gb = _line_to_gb(line, pricing)
-        if gb <= 0:
-            continue
-        per_source[line.bucket] = per_source.get(line.bucket, 0.0) + gb
-        proj.gb_ingested += gb
+        if gb > 0:
+            per_source[line.bucket] = per_source.get(line.bucket, 0.0) + gb
+            proj.gb_ingested += gb
+        search_gb = _line_to_search_gb(line)
+        if search_gb > 0:
+            proj.gb_searched += search_gb
     proj.per_source_gb = per_source
 
     months = max(proj.months_in_window, 1e-9)
     for plan in pricing.plans:
         name = plan["name"]
         fee = float(plan["monthly_fee_usd"]) * months
-        included_gb = float(plan["included_tb"]) * TB_TO_GB * months
-        overage_gb = max(proj.gb_ingested - included_gb, 0.0)
-        proj.plan_costs[name] = fee + overage_gb * pricing.ingest_per_gb_usd
+        included_ingest_gb = float(plan["included_tb"]) * TB_TO_GB * months
+        ingest_overage_gb = max(proj.gb_ingested - included_ingest_gb, 0.0)
+        ingest_cost = fee + ingest_overage_gb * pricing.ingest_per_gb_usd
+
+        if name == "pro":
+            included_search_gb = pricing.search_included_tb_pro * TB_TO_GB
+        else:
+            included_search_gb = 0.0
+        search_overage_gb = max(proj.gb_searched - included_search_gb, 0.0)
+        search_cost = search_overage_gb * pricing.search_per_gb_usd
+
+        proj.plan_ingest_costs[name] = ingest_cost
+        proj.plan_search_costs[name] = search_cost
+        proj.plan_costs[name] = ingest_cost + search_cost
 
     if proj.plan_costs:
-        proj.cheapest_plan, proj.cheapest_cost = min(
-            proj.plan_costs.items(), key=lambda kv: kv[1]
-        )
+        if (
+            pricing.search_force_pro_when_present
+            and proj.gb_searched > 0
+            and "pro" in proj.plan_costs
+        ):
+            proj.cheapest_plan = "pro"
+            proj.cheapest_cost = proj.plan_costs["pro"]
+            proj.forced_pro = True
+        else:
+            proj.cheapest_plan, proj.cheapest_cost = min(
+                proj.plan_costs.items(), key=lambda kv: kv[1]
+            )
 
     if pricing.extended_retention_per_gb_month_usd is None:
         proj.extended_retention_note = (

@@ -45,10 +45,20 @@ def render(
     lines.append("## Executive Summary")
     lines.append("")
     lines.append(f"- **AWS observability spend ({window_days}d):** {_usd(obs_total)}")
+    plan_note = ""
+    if projection.forced_pro:
+        plan_note = " — Pro tier forced because search > 0"
     lines.append(
-        f"- **Projected Bronto spend ({projection.cheapest_plan} plan):** "
+        f"- **Projected Bronto spend ({projection.cheapest_plan} plan{plan_note}):** "
         f"{_usd(bronto_total)}"
     )
+    if projection.gb_searched > 0:
+        ingest_cost = projection.plan_ingest_costs.get(projection.cheapest_plan, 0.0)
+        search_cost = projection.plan_search_costs.get(projection.cheapest_plan, 0.0)
+        lines.append(
+            f"  - Ingest: {_usd(ingest_cost)} ({projection.gb_ingested:,.1f} GB) · "
+            f"Search: {_usd(search_cost)} ({projection.gb_searched:,.1f} GB scanned)"
+        )
     if obs_total > 0:
         lines.append(f"- **Projected savings:** {_usd(savings)} ({savings_pct})")
     if s3_unattr > 0:
@@ -86,9 +96,15 @@ def render(
     lines.append("## Bronto Projection Detail")
     lines.append("")
     lines.append(
-        f"_Total ingested volume (from Cost Explorer usage meters): "
-        f"**{projection.gb_ingested:,.1f} GB** over {window_days} days._"
+        f"_Ingest volume (CW Logs, custom Metrics, X-Ray, AMP, CloudTrail "
+        f"data events): **{projection.gb_ingested:,.1f} GB** over "
+        f"{window_days} days._"
     )
+    if projection.gb_searched > 0:
+        lines.append(
+            f"_Search/scan volume (CW Logs Insights `DataScanned-Bytes`): "
+            f"**{projection.gb_searched:,.1f} GB** over {window_days} days._"
+        )
     lines.append("")
     if projection.per_source_gb:
         lines.append("| Source | GB ingested |")
@@ -98,17 +114,29 @@ def render(
         ):
             lines.append(f"| {src} | {gb:,.1f} |")
         lines.append("")
-    lines.append("| Plan | Monthly fee | Included | Overage rate | Projected total |")
-    lines.append("| --- | ---: | ---: | ---: | ---: |")
+    lines.append(
+        "| Plan | Monthly fee | Included ingest | Ingest cost | Search cost | Total |"
+    )
+    lines.append("| --- | ---: | ---: | ---: | ---: | ---: |")
     for plan in pricing.plans:
         name = plan["name"]
         fee = float(plan["monthly_fee_usd"])
         inc = float(plan["included_tb"])
-        cost = projection.plan_costs.get(name, 0.0)
+        ingest_cost = projection.plan_ingest_costs.get(name, 0.0)
+        search_cost = projection.plan_search_costs.get(name, 0.0)
+        total = projection.plan_costs.get(name, 0.0)
         cheapest = " ←" if name == projection.cheapest_plan else ""
         lines.append(
             f"| {name}{cheapest} | {_usd(fee)} | {inc} TB/mo | "
-            f"${pricing.ingest_per_gb_usd:.2f}/GB | {_usd(cost)} |"
+            f"{_usd(ingest_cost)} | {_usd(search_cost)} | {_usd(total)} |"
+        )
+    if projection.gb_searched > 0:
+        search_tb = pricing.search_included_tb_pro
+        lines.append("")
+        lines.append(
+            f"_Search pricing: Pro tier includes {search_tb:,.0f} TB free, "
+            f"then ${pricing.search_per_gb_usd * 1024:.0f}/TB. "
+            f"Other tiers charge from byte 1._"
         )
     lines.append("")
 
@@ -132,7 +160,14 @@ def render(
         "EBS — show up as AWS spend with no Bronto counterpart, which is why "
         "projected savings can look large."
     )
-    lines.append("- Bronto search pricing is excluded per spec.")
+    lines.append(
+        "- Bronto search is priced as a Pro-tier perk: 500 TB scanned "
+        "included with the $500/mo Pro plan, $1/TB after. When any search "
+        "volume is detected, the headline projection is forced to Pro "
+        "regardless of which tier would be cheapest for ingest alone — "
+        "tune `search_force_pro_when_present` in the rate card if you "
+        "want a different policy."
+    )
     if projection.extended_retention_note:
         lines.append(f"- {projection.extended_retention_note}")
     lines.append(
