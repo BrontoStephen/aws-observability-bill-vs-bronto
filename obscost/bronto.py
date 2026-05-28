@@ -48,6 +48,7 @@ class BrontoPricing:
     bytes_per_prometheus_sample: int
     bytes_per_cloudtrail_event: int
     bytes_per_metric_month: int
+    bytes_per_metric_stream_update: int
 
     @classmethod
     def load(cls, path: str | Path) -> "BrontoPricing":
@@ -67,6 +68,7 @@ class BrontoPricing:
             bytes_per_prometheus_sample=int(data.get("bytes_per_prometheus_sample", 8)),
             bytes_per_cloudtrail_event=int(data.get("bytes_per_cloudtrail_event", 1536)),
             bytes_per_metric_month=int(data.get("bytes_per_metric_month", 3_440_000)),
+            bytes_per_metric_stream_update=int(data.get("bytes_per_metric_stream_update", 80)),
         )
 
 
@@ -100,15 +102,27 @@ def _line_to_gb(line: UsageLine, pricing: BrontoPricing) -> float:
     ut = (line.usage_type or "").lower()
     qty = line.quantity
 
-    if line.bucket == "CloudWatch Logs" and "dataprocessing-bytes" in ut:
-        return qty  # CE reports this in GB already
-    if line.bucket == "CloudWatch Metrics" and "metricmonitor" in ut:
-        return (qty * pricing.bytes_per_metric_month) / GB
+    if line.bucket == "CloudWatch Logs":
+        # Both customer-published logs and vended logs (ALB/CloudFront/etc.)
+        # are reported in GB and both represent ingest.
+        if "dataprocessing-bytes" in ut or "vendedlog-bytes" in ut:
+            return qty
+    if line.bucket == "CloudWatch Metrics":
+        # Custom metrics published (metric-months).
+        if "metricmonitor" in ut:
+            return (qty * pricing.bytes_per_metric_month) / GB
+        # Metric Streams forwarding (per metric update — Bronto-equivalent
+        # since this is what you'd send if you routed metrics to Bronto
+        # directly instead of via Streams + Firehose).
+        if "metricstream" in ut:
+            return (qty * pricing.bytes_per_metric_stream_update) / GB
     if line.bucket == "X-Ray" and "tracesrecorded" in ut:
         return (qty * pricing.bytes_per_xray_trace) / GB
     if line.bucket == "Managed Prometheus" and "samples" in ut:
         return (qty * pricing.bytes_per_prometheus_sample) / GB
-    if line.bucket == "CloudTrail" and ("dataevents" in ut or "data-events" in ut):
+    if line.bucket == "CloudTrail" and (
+        "dataevents" in ut or "data-events" in ut or "paideventsrecorded" in ut
+    ):
         return (qty * pricing.bytes_per_cloudtrail_event) / GB
     return 0.0
 

@@ -40,3 +40,8 @@ bytes_per_cloudtrail_event: 1536    # 1.5 KB / event
 # ~80 bytes/datapoint serialized → ~3.4 MB / metric-month. Tune for your
 # resolution (5-min = 8,640 datapoints = ~700 KB).
 bytes_per_metric_month: 3_440_000
+
+# CloudWatch Metric Streams forwards each metric update (data point) to a
+# destination (typically Firehose). Each update carries metric name,
+# namespace, dimensions, timestamp, and value — ~80 bytes serialized.
+bytes_per_metric_stream_update: 80

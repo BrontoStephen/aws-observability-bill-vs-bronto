@@ -14,12 +14,14 @@ No probes. No regional walks. No bucket scanning. **Just the bill.**
 
 | Source | Where the cost shows up | How GB is derived |
 | --- | --- | --- |
-| CloudWatch Logs (ingest) | `Amazon CloudWatch` / `DataProcessing-Bytes` | Direct (GB) |
+| CloudWatch Logs — customer | `Amazon CloudWatch` / `DataProcessing-Bytes` | Direct (GB) |
+| CloudWatch Logs — vended | `Amazon CloudWatch` / `VendedLog-Bytes` | Direct (GB) — ALB, CloudFront, Route 53, etc. |
 | CloudWatch Logs Insights (search) | `Amazon CloudWatch` / `DataScanned-Bytes` | Direct (GB) — counted toward Bronto search |
-| CloudWatch Metrics | `Amazon CloudWatch` / `MetricMonitor` | metric-months × bytes/metric-month |
+| CloudWatch custom metrics | `Amazon CloudWatch` / `MetricMonitorUsage` | metric-months × bytes/metric-month |
+| CloudWatch Metric Streams | `Amazon CloudWatch` / `MetricStreamUsage` | updates × bytes/update (the Bronto-equivalent for metrics forwarding) |
 | X-Ray | `AWS X-Ray` / `TracesRecorded` | traces × bytes/trace |
 | Managed Prometheus | `Amazon Managed Service for Prometheus` / samples | samples × bytes/sample |
-| CloudTrail data events | `AWS CloudTrail` / `DataEvents` | events × bytes/event |
+| CloudTrail data events | `AWS CloudTrail` / `PaidEventsRecorded` | events × bytes/event |
 
 The bytes-per-unit assumptions are all configurable in
 [config/bronto_pricing.yaml](config/bronto_pricing.yaml).
