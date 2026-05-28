@@ -185,19 +185,24 @@ dollar projection but make the comparison fair.
 Write to `report.md` (or print to stdout if the user asks). Required
 sections, in order:
 
-1. **Header**
+1. **Header + savings callout**
    ```
    # AWS Observability Bill vs Bronto.io
    _Window: <start> → <end> (<N> days)_
    _Management account: <id> — accounts in scope: <count>_
-   ```
 
-2. **Executive Summary**
+   > **Projected savings: <pct>% ($<amt> over <N> days)** — switching
+   > to Bronto.io would cost $<bronto> vs $<aws> on AWS.
+   ```
+   The blockquote callout must appear **before** the Executive Summary
+   so the headline number is the first substantive line a reader sees.
+
+2. **Executive Summary** (in this order — savings first):
+   - **Projected savings** ($ and %)
    - AWS observability spend ($)
    - Projected Bronto spend (cheapest plan) — show ingest vs search split
      if `gb_searched > 0`
    - **Ingest by signal type** — one line: `Logs X GB · Metrics Y GB · Traces Z GB`
-   - Projected savings ($ and %)
    - S3 (separate) note with the dollar figure if > 0
 
 3. **Spend by Service** — Markdown table: bucket | spend | % of obs total.
