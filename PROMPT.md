@@ -137,11 +137,21 @@ challenged):
 - 8 B/Prometheus sample
 - 1.5 KB/CloudTrail data event
 
-### Step 6 — compute `gb_searched`
+### Step 6 — compute `gb_searched` across all three signals
 
-For each Query B line in bucket `CloudWatch Insights` whose usage type
-contains `datascanned`, add its `UsageQuantity.Amount` (already in GB) to
-`gb_searched`.
+Bronto's search rate ($1/TB) applies uniformly across logs, metrics,
+and traces. Convert each query/scan usage type:
+
+| Bucket | Usage-type substring | Signal | GB formula |
+| --- | --- | --- | --- |
+| CloudWatch Insights | `datascanned` | logs | `qty` (already in GB) |
+| CloudWatch Metrics | `gmd-metrics` (GetMetricData) | metrics | `qty × 5,120 / 1024³` |
+| X-Ray | `tracesretrieved`, `tracesscanned` | traces | `qty × 2,048 / 1024³` |
+
+Defaults: 5 KB per metric query (typical ~1h × 1-min resolution dashboard
+query = 60 datapoints × ~80 B). 2 KB per trace query (one full trace
+retrieval). Maintain `search_gb_by_signal = {logs, metrics, traces}` so
+the report can show the breakdown next to `gb_searched`.
 
 ### Step 7 — project Bronto cost per plan
 
