@@ -20,6 +20,16 @@ current credentials can see via Cost Explorer, then project what
 Bronto.io would charge for the same volume. Output a single Markdown
 report.
 
+**Default mode is direct AWS CLI.** Run each `aws ce` / `aws sts` /
+`aws organizations` call from your shell as you go, parsing JSON inline
+(via `jq`, Python, or whatever you already have). Do **not** invoke
+`python aws_obs_cost.py` from this repo unless the user explicitly asks
+("use the script", "run the Python", etc.). The point of doing the
+analysis through a prompt is to allow follow-up investigation —
+pivoting on the user's questions, probing specific accounts or time
+windows, drilling into anomalies — that a fixed script can't do. If the
+user does ask for the Python, run it; otherwise stay in direct CLI.
+
 This is an **initial CE-only exploration**. The user can follow up
 with additional prompts to attempt direct service probes (e.g.
 `aws opensearch list-domain-names`, `aws cloudwatch list-metrics
@@ -274,19 +284,23 @@ dollar projection but make the comparison fair.
 ### Step 7a — apples-to-apples savings
 
 ```
-post_migration_cost = aws_floor + cheapest_bronto_total
-apples_savings_abs  = total_obs_forward - post_migration_cost
-apples_savings_pct  = apples_savings_abs / total_obs_forward * 100
+post_migration_cost      = aws_floor + cheapest_bronto_total
+apples_savings_abs       = total_obs_forward - post_migration_cost
+apples_savings_pct       = apples_savings_abs / total_obs_forward * 100
 
-# Also compute the naive number so readers can see the inflation:
-naive_savings_abs   = total_obs_as_billed - cheapest_bronto_total
-naive_savings_pct   = naive_savings_abs / total_obs_as_billed * 100
+# Annualize so an exec can read it without doing the math.
+projected_annual_savings = apples_savings_abs * (365 / window_days)
 ```
 
-The **headline number is `apples_savings_pct`**, not the naive number.
-Show the naive number in the Executive Summary as a parenthetical
-"for reference" line so readers understand why the simple comparison
-overstates.
+The **headline number is `apples_savings_pct`**. Pair the annualized
+figure with this one-line disclaimer everywhere it appears: _"Extrapolated
+from current usage; does not account for company growth, retention
+changes, or workload shifts."_
+
+Do **not** compute or surface a "naive savings" (`total_obs_as_billed
+- cheapest_bronto_total`) anywhere. That number assumes Bronto displaces
+the MetricStream/Firehose floor — it doesn't, so the comparison would
+be wrong.
 
 ### Step 7b — OpenSearch displacement analysis (if any OpenSearch spend exists)
 
@@ -365,12 +379,15 @@ sections, in order:
    > $<post_migration> vs **$<total_obs_forward>** AWS run-rate
    > (excludes $<decom_spend> of decommissioned services). Unavoidable
    > AWS-side floor: **$<aws_floor>** (MetricStream + Firehose).
+   > **Projected annual savings: $<annualized>/year (extrapolated)**.
    ```
    The blockquote callout must appear **before** the Executive Summary.
 
-2. **Executive Summary**:
+2. **Executive Summary** (top bookend):
    - ⚠️ Decommissioned services warning (if any were detected)
    - **Projected savings (forward-looking, apples-to-apples)** ($ and %)
+   - **Projected annual savings** ($/year) — pair with the one-line
+     disclaimer about not modeling growth / retention / workload shifts
    - AWS observability spend, as-billed
    - AWS observability spend, forward-looking (ex-decom) — only if decom_spend > 0
    - Post-migration cost = AWS floor + Bronto plan
@@ -379,8 +396,10 @@ sections, in order:
    - Projected Bronto spend (cheapest plan) — show ingest + search split
      if `gb_searched > 0`
    - **Ingest by signal type** — `Logs X GB · Metrics Y GB · Traces Z GB`
-   - _For reference, naive savings ignoring AWS floor:_ — parenthetical
    - S3 (separate) note if > 0
+
+   Do **not** include a "naive savings ignoring AWS floor" line. The
+   headline is the apples-to-apples number, full stop.
 
 3. **Spend by Service** — table with **Status** column. Sort descending
    by spend. Status values: `**floor (survives)**`, `displaceable`,
@@ -417,6 +436,23 @@ sections, in order:
    - Bytes-per-unit defaults used (list inline).
    - OpenSearch sizing constants source.
    - Enterprise non-price perks.
+   - **Transition overlap** (templatize from actual figures): if
+     `CloudWatch Alarms + CloudWatch Dashboards` spend is non-zero, add
+     a bullet: _"If you keep CloudWatch Alarms/Dashboards running in
+     parallel during the migration, add up to $<alarms + dashboards>
+     back onto the post-migration total until they're cut over."_
+     Compute the dollar figure from this account's actual spend — do
+     **not** hardcode a number.
+
+9. **TL;DR — Cost Savings** (bottom bookend). 2-3 lines:
+   - Apples-to-apples savings ($ + %) over the window.
+   - **Annualized** ($/year) with the same one-line disclaimer used in
+     the top Executive Summary.
+   - Winning Bronto plan name + cost.
+   - Brief note: _"Detailed assumptions in caveats above."_
+
+   This duplicates the headline from the top so an exec who jumps to
+   the bottom of the report still sees the savings figure.
 
 ### Output discipline
 
