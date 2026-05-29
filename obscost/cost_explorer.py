@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from typing import Optional
 
 import boto3
@@ -38,12 +39,18 @@ OBS_SERVICES = [
     "AWS CloudTrail",
 ]
 
+# Firehose is the transport layer for CW MetricStream → Bronto. It's billed
+# as a separate AWS service, so we fetch it with a dedicated CE call (see
+# `fetch_firehose_costs`). Both naming variants exist in different accounts.
+FIREHOSE_SERVICES = ["Amazon Kinesis Firehose", "Amazon Data Firehose"]
+
 S3_SERVICE = "Amazon Simple Storage Service"
 
 
 BUCKETS = [
     "CloudWatch Logs",
     "CloudWatch Metrics",
+    "CloudWatch MetricStream (floor)",
     "CloudWatch Alarms",
     "CloudWatch Dashboards",
     "CloudWatch Insights",
@@ -54,12 +61,20 @@ BUCKETS = [
     "Managed Grafana",
     "OpenSearch",
     "CloudTrail",
+    "Firehose (floor)",
     "S3 (unattributed)",
 ]
 
 
 def _classify(service: str, usage_type: str) -> str:
-    """Map a (service, usage_type) pair to one of BUCKETS."""
+    """Map a (service, usage_type) pair to one of BUCKETS.
+
+    Floor buckets ("CloudWatch MetricStream (floor)", "Firehose (floor)")
+    represent AWS-side charges that *survive* a Bronto migration. They
+    still contribute to gb_ingested for the Bronto projection (the bytes
+    still flow into Bronto), but they are kept on the AWS side of the
+    apples-to-apples comparison.
+    """
     ut = usage_type or ""
     svc = service or ""
 
@@ -73,14 +88,20 @@ def _classify(service: str, usage_type: str) -> str:
         return "OpenSearch"
     if svc == "AWS CloudTrail":
         return "CloudTrail"
+    if svc in FIREHOSE_SERVICES:
+        return "Firehose (floor)"
     if svc == S3_SERVICE:
         return "S3 (unattributed)"
 
     # CloudWatch sub-buckets — usage-type strings vary by region prefix.
-    # Order matters: Insights (DataScanned-Bytes) must be checked before
-    # the generic Logs check, otherwise the "log" substring in the prefix
-    # would steal it.
+    # Order matters:
+    #   1. MetricStream (floor) must be checked before generic Metrics —
+    #      it's an egress/transport charge on top of regular CW Metrics.
+    #   2. Insights (DataScanned-Bytes) must be checked before Logs —
+    #      the region prefix can contain the substring "log".
     u = ut.lower()
+    if "metricstream" in u:
+        return "CloudWatch MetricStream (floor)"
     if "datascanned" in u or "queryscanned" in u or "insight" in u:
         return "CloudWatch Insights"
     if "logs" in u or "log-" in u or "vpcflowlog" in u or "dataprocessing-bytes" in u:
@@ -250,3 +271,136 @@ def fetch_costs(
             break
 
     return report
+
+
+def fetch_firehose_costs(
+    session: boto3.Session,
+    start: str,
+    end: str,
+    account_ids: Optional[list[str]] = None,
+) -> list:
+    """Pull Kinesis Firehose / Data Firehose spend.
+
+    Firehose is the transport for CloudWatch MetricStream → Bronto. It's a
+    distinct AWS service so we fetch it with a dedicated CE call rather than
+    bundling it into the main observability filter. Returns a list of
+    UsageLine objects (account_id="*", bucket="Firehose (floor)") ready to
+    be merged into the main CostReport.lines.
+    """
+    ce = session.client("ce", region_name="us-east-1")
+    cost_filter: dict = {"Dimensions": {"Key": "SERVICE", "Values": FIREHOSE_SERVICES}}
+    if account_ids:
+        cost_filter = {
+            "And": [
+                cost_filter,
+                {"Dimensions": {"Key": "LINKED_ACCOUNT", "Values": list(account_ids)}},
+            ]
+        }
+
+    lines: list[UsageLine] = []
+    token: Optional[str] = None
+    while True:
+        kwargs = dict(
+            TimePeriod={"Start": start, "End": end},
+            Granularity="MONTHLY",
+            Metrics=["UnblendedCost", "UsageQuantity"],
+            Filter=cost_filter,
+            GroupBy=[
+                {"Type": "DIMENSION", "Key": "SERVICE"},
+                {"Type": "DIMENSION", "Key": "USAGE_TYPE"},
+            ],
+        )
+        if token:
+            kwargs["NextPageToken"] = token
+        try:
+            resp = ce.get_cost_and_usage(**kwargs)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Firehose CE query failed: %s", e)
+            return lines
+        for period in resp.get("ResultsByTime", []):
+            for group in period.get("Groups", []):
+                keys = group.get("Keys", [])
+                if len(keys) < 2:
+                    continue
+                service, usage_type = keys[0], keys[1]
+                m = group.get("Metrics", {})
+                amount = float(m.get("UnblendedCost", {}).get("Amount", 0.0))
+                qty = float(m.get("UsageQuantity", {}).get("Amount", 0.0))
+                unit = m.get("UsageQuantity", {}).get("Unit", "")
+                lines.append(
+                    UsageLine(
+                        account_id="*",
+                        service=service,
+                        usage_type=usage_type,
+                        bucket="Firehose (floor)",
+                        amount_usd=amount,
+                        quantity=qty,
+                        unit=unit,
+                    )
+                )
+        token = resp.get("NextPageToken")
+        if not token:
+            break
+    return lines
+
+
+def fetch_recent_spend_by_service(
+    session: boto3.Session,
+    days: int = 7,
+    account_ids: Optional[list[str]] = None,
+) -> dict[str, float]:
+    """Trailing-N-day spend grouped by SERVICE — used for decom detection.
+
+    A service with spend > 0 in the analysis window but $0 in the trailing
+    `days` window is flagged as decommissioned and excluded from the
+    forward-looking AWS baseline.
+
+    Filtered to observability services + Firehose (so we never flag e.g.
+    EC2 or S3 as decom — out of scope).
+    """
+    ce = session.client("ce", region_name="us-east-1")
+    today = date.today()
+    start = (today - timedelta(days=days)).isoformat()
+    end = today.isoformat()
+
+    services = OBS_SERVICES + FIREHOSE_SERVICES
+    cost_filter: dict = {"Dimensions": {"Key": "SERVICE", "Values": services}}
+    if account_ids:
+        cost_filter = {
+            "And": [
+                cost_filter,
+                {"Dimensions": {"Key": "LINKED_ACCOUNT", "Values": list(account_ids)}},
+            ]
+        }
+
+    spend_by_service: dict[str, float] = {svc: 0.0 for svc in services}
+    token: Optional[str] = None
+    while True:
+        kwargs = dict(
+            TimePeriod={"Start": start, "End": end},
+            Granularity="DAILY",
+            Metrics=["UnblendedCost"],
+            Filter=cost_filter,
+            GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
+        )
+        if token:
+            kwargs["NextPageToken"] = token
+        try:
+            resp = ce.get_cost_and_usage(**kwargs)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Trailing-%dd CE probe failed: %s", days, e)
+            return spend_by_service
+        for period in resp.get("ResultsByTime", []):
+            for group in period.get("Groups", []):
+                keys = group.get("Keys", [])
+                if not keys:
+                    continue
+                svc = keys[0]
+                amount = float(
+                    group.get("Metrics", {}).get("UnblendedCost", {}).get("Amount", 0.0)
+                )
+                spend_by_service[svc] = spend_by_service.get(svc, 0.0) + amount
+        token = resp.get("NextPageToken")
+        if not token:
+            break
+    return spend_by_service

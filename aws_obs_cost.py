@@ -72,9 +72,38 @@ def main(argv: list[str] | None = None) -> int:
     log.info("Cost Explorer returned %d usage lines across %d account(s)",
              len(cost.lines), len(cost.accounts_seen))
 
-    projection = bronto.project(cost, pricing)
-    log.info("Bronto projection: $%.2f (plan: %s) on %.1f GB ingested",
-             projection.cheapest_cost, projection.cheapest_plan, projection.gb_ingested)
+    # Firehose is the transport layer for CW MetricStream → Bronto. Pulled
+    # as a separate CE call (different service dimension) and merged into
+    # the main report's lines so the Firehose (floor) bucket appears in
+    # the same per-bucket totals.
+    firehose_lines = cost_explorer.fetch_firehose_costs(
+        session=oc.session,
+        start=args.start,
+        end=args.end,
+        account_ids=filter_ids,
+    )
+    if firehose_lines:
+        cost.lines.extend(firehose_lines)
+        log.info("Firehose CE query: %d additional usage lines", len(firehose_lines))
+
+    # Trailing-7-day probe to detect decommissioned services.
+    recent_spend = cost_explorer.fetch_recent_spend_by_service(
+        session=oc.session,
+        days=7,
+        account_ids=filter_ids,
+    )
+    decom_active = [s for s, v in recent_spend.items() if v > 0]
+    log.info("Trailing-7d probe: %d services with non-zero spend", len(decom_active))
+
+    projection = bronto.project(cost, pricing, recent_spend_by_service=recent_spend)
+    log.info(
+        "Bronto projection: $%.2f (plan: %s) on %.1f GB ingested; "
+        "apples-to-apples savings $%.2f (%.1f%%)",
+        projection.cheapest_cost, projection.cheapest_plan, projection.gb_ingested,
+        projection.apples_savings_abs, projection.apples_savings_pct,
+    )
+    if projection.decommissioned:
+        log.info("Decommissioned: %s", ", ".join(sorted(projection.decommissioned)))
 
     md = report.render(
         report=cost,
