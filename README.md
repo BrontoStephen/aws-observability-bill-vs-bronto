@@ -1,10 +1,47 @@
 # AWS Observability Bill vs Bronto.io
 
-A tiny Python CLI that pulls observability spend from the AWS **Cost
-Explorer API** and compares it to what [Bronto.io](https://bronto.io/pricing)
-would charge for the same ingested volume at `$0.10/GB`.
+Audit what AWS bills you for observability (CloudWatch, X-Ray, AMP, AMG,
+OpenSearch, CloudTrail data events, Firehose) and project what
+[Bronto.io](https://bronto.io/pricing) would charge for the same
+ingested volume. **Apples-to-apples**: AWS charges that survive a Bronto
+migration (CloudWatch MetricStream + Firehose — the "floor") stay on the
+AWS side; only displaceable spend is replaced by the Bronto plan.
 
-No probes. No regional walks. No bucket scanning. **Just the bill.**
+## How to run this — three options
+
+### 1. Recommended — use [PROMPT.md](PROMPT.md) with any LLM coding agent
+
+Paste [PROMPT.md](PROMPT.md) into [Claude Code](https://claude.com/claude-code),
+[OpenAI Codex CLI](https://github.com/openai/codex-cli),
+[Google Antigravity](https://antigravity.google), or any LLM agent with
+AWS CLI access. The LLM runs `aws ce` calls directly and produces the
+same Markdown report — **and you can keep going from there**: pivot into
+specific accounts, drill into anomalies, probe odd usage types, ask
+"why is X so high?". A fixed script can't do that. A prompt can.
+
+### 2. No LLM available? Run the CE-only Python in this repo.
+
+```sh
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python aws_obs_cost.py
+```
+
+Fast, deterministic, no probes, no cross-account walks. Same output
+structure as option 1. Same code lives in the sibling repo
+[`aws-observability-bill-vs-bronto`](https://github.com/BrontoStephen/aws-observability-bill-vs-bronto)
+— this one — and is functionally identical to the no-`--probe` mode of
+option 3.
+
+### 3. Deepest analysis — sibling repo with `--probe`.
+
+[`bronto-aws-savings-report`](https://github.com/BrontoStephen/bronto-aws-savings-report)
+adds cross-account walks, regional probes for OpenSearch / VPC Flow Logs
+/ AMP, and S3 log-sink attribution. ~3 minutes; richest output. Use when
+the Cost Explorer view isn't enough — e.g. OpenSearch lives in a linked
+account, or you want bucket-level S3 attribution.
+
+---
 
 The comparison is **apples-to-apples**: AWS charges that survive a
 Bronto migration (CloudWatch MetricStream egress + Kinesis Firehose
@@ -19,16 +56,6 @@ exceptions, called out in caveats. The OpenSearch displacement section
 estimates Bronto incremental cost across retention scenarios using AWS's
 [published pricing examples](https://aws.amazon.com/opensearch-service/pricing/)
 to size the cluster from CE line items.
-
-> **Want this without the Python?** See [PROMPT.md](PROMPT.md) — a
-> portable, self-contained prompt you can paste into Claude Code,
-> OpenAI Codex CLI, Google Antigravity, or any coding agent that has
-> AWS CLI access. It produces the same Markdown report using only
-> `aws ce` calls.
-
-> Looking for a richer version that also walks every region and attributes
-> S3 log-sink buckets to their producing service? See the sibling repo
-> [bronto-aws-savings-report](https://github.com/BrontoStephen/bronto-aws-savings-report).
 
 ## What it counts
 

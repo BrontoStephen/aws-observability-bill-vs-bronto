@@ -3,13 +3,19 @@
 Layout (top-down):
 
   1. Header + savings callout (forward-looking, apples-to-apples)
-  2. Executive Summary
+  2. Executive Summary (full)
   3. Spend by Service (with Status column: floor / displaceable / decommissioned)
   4. AWS-side Floor detail
   5. OpenSearch Displacement Analysis (if footprint detected)
   6. Spend by Account
   7. Bronto Projection Detail (per-source GB, plan comparison incl. floor)
   8. Caveats
+  9. TL;DR — Cost Savings (bookend: headline number is first and last
+     thing the reader sees)
+
+Annualized savings = window savings × (365 / window_days). Always paired
+with a disclaimer about not modeling company growth, retention changes,
+or workload shifts.
 """
 
 from __future__ import annotations
@@ -23,6 +29,18 @@ from .bronto import (
 )
 from .cost_explorer import CostReport
 from .org import Account
+
+
+ANNUALIZATION_DISCLAIMER = (
+    "Extrapolated from current usage; does not account for company "
+    "growth, retention changes, or workload shifts."
+)
+
+
+def _annualized(savings_abs: float, window_days: int) -> float:
+    if window_days <= 0:
+        return 0.0
+    return savings_abs * (365.0 / window_days)
 
 
 def _usd(x: float) -> str:
@@ -75,6 +93,8 @@ def render(
     )
     lines.append("")
 
+    annualized_savings = _annualized(projection.apples_savings_abs, window_days)
+
     # Lead with forward-looking apples-to-apples savings.
     if obs_total_forward > 0:
         callout = (
@@ -86,7 +106,11 @@ def render(
         )
         if projection.decom_spend > 0:
             callout += f" (excludes {_usd(projection.decom_spend)} of decommissioned services)"
-        callout += f". Unavoidable AWS-side floor: **{_usd(projection.aws_floor)}** (MetricStream + Firehose)."
+        callout += (
+            f". Unavoidable AWS-side floor: **{_usd(projection.aws_floor)}** "
+            f"(MetricStream + Firehose). "
+            f"**Projected annual savings: {_usd(annualized_savings)}/year (extrapolated)**."
+        )
         lines.append(callout)
         lines.append("")
 
@@ -105,6 +129,10 @@ def render(
         lines.append(
             f"- **Projected savings (forward-looking, apples-to-apples)**: "
             f"{_usd(projection.apples_savings_abs)} ({_pct(projection.apples_savings_pct)})"
+        )
+        lines.append(
+            f"- **Projected annual savings**: {_usd(annualized_savings)}/year "
+            f"_({ANNUALIZATION_DISCLAIMER})_"
         )
     lines.append(
         f"- AWS observability spend, as-billed over {window_days} days: "
@@ -151,12 +179,6 @@ def render(
             f"- Ingest by signal type: Logs {_gb(sig.get('logs', 0))} · "
             f"Metrics {_gb(sig.get('metrics', 0))} · "
             f"Traces {_gb(sig.get('traces', 0))} (total **{_gb(projection.gb_ingested)}**)"
-        )
-    if obs_total > 0:
-        lines.append(
-            f"- _For reference, naive savings ignoring AWS floor: "
-            f"{_usd(projection.naive_savings_abs)} ({_pct(projection.naive_savings_pct)}) — "
-            "overstated because it assumes Bronto displaces MetricStream/Firehose._"
         )
     if s3_unattr > 0:
         lines.append(
@@ -491,6 +513,17 @@ def render(
         "retention beyond 12 mo, OpenSearch EBS) only displace if you actually "
         "cut over those workflows."
     )
+    alarms_plus_dashboards = (
+        by_bucket.get("CloudWatch Alarms", 0.0)
+        + by_bucket.get("CloudWatch Dashboards", 0.0)
+    )
+    if alarms_plus_dashboards > 0:
+        lines.append(
+            f"- **Transition overlap**: if you keep CloudWatch Alarms/Dashboards "
+            f"running in parallel during the migration, add up to "
+            f"**{_usd(alarms_plus_dashboards)}** back onto the post-migration total "
+            f"until they're cut over."
+        )
     lines.append("- **Bytes-per-unit defaults used**:")
     lines.append(
         f"  - CloudWatch custom metrics: {pricing.bytes_per_metric_month/1_000_000:.1f} MB / metric-month"
@@ -516,4 +549,26 @@ def render(
     if projection.extended_retention_note:
         lines.append(f"- {projection.extended_retention_note}")
     lines.append("")
+
+    # TL;DR Executive Summary (bookend) — mirrors the headline so a reader
+    # who scrolls to the bottom doesn't have to scroll back to the top.
+    lines.append("## TL;DR — Cost Savings")
+    lines.append("")
+    if obs_total_forward > 0:
+        lines.append(
+            f"- **Apples-to-apples savings**: {_usd(projection.apples_savings_abs)} "
+            f"({_pct(projection.apples_savings_pct)}) over {window_days} days."
+        )
+        lines.append(
+            f"- **Annualized**: {_usd(annualized_savings)}/year "
+            f"_({ANNUALIZATION_DISCLAIMER})_"
+        )
+        if projection.cheapest_plan:
+            lines.append(
+                f"- **Winning Bronto plan**: {projection.cheapest_plan} "
+                f"({_usd(bronto_total)} over the window)."
+            )
+        lines.append("")
+        lines.append("_Detailed assumptions in caveats above._")
+        lines.append("")
     return "\n".join(lines)
