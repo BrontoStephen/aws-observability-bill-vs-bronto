@@ -6,6 +6,20 @@ would charge for the same ingested volume at `$0.10/GB`.
 
 No probes. No regional walks. No bucket scanning. **Just the bill.**
 
+The comparison is **apples-to-apples**: AWS charges that survive a
+Bronto migration (CloudWatch MetricStream egress + Kinesis Firehose
+transport — the "floor") stay on the AWS side. Only displaceable
+spend gets replaced by the Bronto plan cost. Services that have gone
+silent in the trailing 7 days are flagged as decommissioned and
+excluded from the forward-looking baseline.
+
+OpenSearch sits in the displaceable bucket — Bronto absorbs log-search /
+SIEM / time-series workloads. Vector / RAG / application search are the
+exceptions, called out in caveats. The OpenSearch displacement section
+estimates Bronto incremental cost across retention scenarios using AWS's
+[published pricing examples](https://aws.amazon.com/opensearch-service/pricing/)
+to size the cluster from CE line items.
+
 > **Want this without the Python?** See [PROMPT.md](PROMPT.md) — a
 > portable, self-contained prompt you can paste into Claude Code,
 > OpenAI Codex CLI, Google Antigravity, or any coding agent that has
